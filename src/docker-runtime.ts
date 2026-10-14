@@ -1,12 +1,11 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import type { Config } from "./config.js";
-import { renderNginx } from "./nginx.js";
+import { ADMIN_SOCKET, BACKEND, parseSlots, planUpstreams, renderHaproxyConfig } from "./haproxy.js";
 import type { Probe, Replica, Runtime } from "./runtime.js";
 
 const LABEL = "shipwright.app";
-const LB_IMAGE = "nginx:1.27-alpine";
-const CONF = "/etc/nginx/conf.d/default.conf";
+const LB_IMAGE = "haproxy:3.2-alpine";
 
 const networkName = (app: string) => `shipwright-${app}`;
 const lbName = (app: string) => `${app}-lb`;
@@ -33,6 +32,10 @@ export class DockerRuntime implements Runtime {
       name: lbName(cfg.app),
       Image: LB_IMAGE,
       Labels: { [LABEL]: cfg.app, "shipwright.role": "lb" },
+      // The config is passed in an env var and written at startup, so no
+      // host files or bind mounts are needed.
+      Env: [`HAPROXY_CFG=${renderHaproxyConfig(cfg.healthCheck.path, cfg.port)}`],
+      Entrypoint: ["sh", "-c", 'printf "%s" "$HAPROXY_CFG" > /tmp/haproxy.cfg && exec haproxy -W -db -f /tmp/haproxy.cfg'],
       ExposedPorts: { "80/tcp": {} },
       HostConfig: {
         PortBindings: { "80/tcp": [{ HostPort: String(cfg.publicPort) }] },
@@ -41,7 +44,7 @@ export class DockerRuntime implements Runtime {
       },
     });
     await created.start();
-    await this.setUpstreams(cfg, []);
+    await this.waitForAdminSocket(cfg.app);
   }
 
   async listReplicas(app: string): Promise<Replica[]> {
@@ -99,20 +102,20 @@ export class DockerRuntime implements Runtime {
     }
   }
 
-  // Swap the nginx config and reload. The new file is validated with
-  // `nginx -t` first; if it is invalid the previous config is put back, so a
-  // bad render can never take the load balancer down. `nginx -s reload` is
-  // graceful: old workers finish their in-flight requests.
+  // Change which replicas receive traffic, without reloading HAProxy.
   async setUpstreams(cfg: Config, replicas: Replica[]): Promise<void> {
-    const script = [
-      `cp ${CONF} ${CONF}.bak 2>/dev/null || true`,
-      `printf '%s' "$NGINX_CONF" > ${CONF}`,
-      `if nginx -t 2>/tmp/nginx-test.log; then nginx -s reload; else cp ${CONF}.bak ${CONF}; cat /tmp/nginx-test.log; exit 1; fi`,
-    ].join(" && ");
-    const { exitCode, output } = await this.exec(lbName(cfg.app), ["sh", "-c", script], [
-      `NGINX_CONF=${renderNginx(cfg, replicas)}`,
-    ]);
-    if (exitCode !== 0) throw new Error(`nginx rejected the new config:\n${output}`);
+    const ips = await Promise.all(replicas.map((r) => this.ipOf(r.id, cfg.app)));
+    const commands = planUpstreams(parseSlots(await this.admin(cfg.app, `show servers state ${BACKEND}`)), ips, cfg.port);
+    if (commands.length > 0) await this.admin(cfg.app, commands.join("; "));
+
+    // Verify instead of trusting command output: every wanted IP must now be active.
+    const active = new Set(
+      parseSlots(await this.admin(cfg.app, `show servers state ${BACKEND}`))
+        .filter((s) => s.state === "active")
+        .map((s) => s.addr),
+    );
+    const missing = ips.filter((ip) => !active.has(ip));
+    if (missing.length > 0) throw new Error(`HAProxy did not activate ${missing.join(", ")}`);
   }
 
   async stopReplica(replica: Replica, timeoutSec: number): Promise<void> {
@@ -134,6 +137,35 @@ export class DockerRuntime implements Runtime {
     const all = await this.docker.listContainers({ all: true, filters: { label: [`${LABEL}=${app}`] } });
     await Promise.all(all.map((c) => this.docker.getContainer(c.Id).remove({ force: true })));
     await this.docker.getNetwork(networkName(app)).remove().catch(() => undefined);
+  }
+
+  private async ipOf(id: string, app: string): Promise<string> {
+    const info = await this.docker.getContainer(id).inspect();
+    const ip = info.NetworkSettings.Networks[networkName(app)]?.IPAddress;
+    if (!ip) throw new Error(`${info.Name} has no IP on ${networkName(app)}`);
+    return ip;
+  }
+
+  // Send commands to HAProxy's Runtime API over its unix socket, from inside
+  // the LB container, so the admin API is never exposed on the network.
+  private async admin(app: string, command: string): Promise<string> {
+    const { exitCode, output } = await this.exec(lbName(app), ["sh", "-c", `printf '%s\\n' "$CMD" | socat stdio unix-connect:${ADMIN_SOCKET}`], [
+      `CMD=${command}`,
+    ]);
+    if (exitCode !== 0) throw new Error(`HAProxy admin command failed: ${output}`);
+    return output;
+  }
+
+  private async waitForAdminSocket(app: string): Promise<void> {
+    for (let i = 0; i < 50; i++) {
+      try {
+        await this.admin(app, "show info");
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    throw new Error("HAProxy admin socket did not come up");
   }
 
   private async describe(id: string, release: number, index: number, image: string): Promise<Replica> {

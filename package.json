@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run test/deployer.test.ts test/config.test.ts test/lock.test.ts",
+    "test": "vitest run --exclude test/e2e.test.ts",
     "test:e2e": "vitest run test/e2e.test.ts",
     "demo:images": "sh scripts/build-demo-images.sh",
     "sw": "tsx src/cli.ts"
