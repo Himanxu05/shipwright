@@ -1,0 +1,30 @@
+{
+  "name": "shipwright",
+  "version": "1.0.0",
+  "description": "Zero-downtime rolling deploys for Docker containers behind nginx, with health checks and automatic rollback",
+  "type": "module",
+  "bin": {
+    "shipwright": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run test/deployer.test.ts test/config.test.ts test/lock.test.ts",
+    "test:e2e": "vitest run test/e2e.test.ts",
+    "demo:images": "sh scripts/build-demo-images.sh",
+    "sw": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "dockerode": "^5.0.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^4.0.2",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.4"
+  }
+}
