@@ -6,18 +6,23 @@ command, like a tiny single-host Kubernetes Deployment.
 
 ```
 $ shipwright deploy --image shipwright-demo:v2
-17:07:15.392 release 2: shipwright-demo:v2 (3 running → 3 replicas)
-17:07:15.657   started demo-r2-0, waiting for health check
-17:07:17.853   demo-r2-0 healthy, added to load balancer
-17:07:19.668   stopped demo-r1-0
-...
-17:07:28.090 release 2 live on :8090
+17:16:44.178 release 2: shipwright-demo:v2 (3 running → 3 replicas)
+17:16:44.448   started demo-r2-0, waiting for health check
+17:16:46.637   demo-r2-0 healthy, added to load balancer
+17:16:48.586   stopped demo-r1-0
+17:16:48.845   started demo-r2-1, waiting for health check
+17:16:50.981   demo-r2-1 healthy, added to load balancer
+17:16:52.907   stopped demo-r1-1
+17:16:53.158   started demo-r2-2, waiting for health check
+17:16:55.294   demo-r2-2 healthy, added to load balancer
+17:16:57.215   stopped demo-r1-2
+17:16:57.240 release 2 live on :8090
 
 $ shipwright deploy --image shipwright-demo:v3-broken
-17:14:56.101 release 7: shipwright-demo:v3-broken (3 running → 3 replicas)
-17:14:56.370   started demo-r7-0, waiting for health check
-17:15:06.512   FAILED: demo-r7-0 did not become healthy within 10000 ms. Rolling back.
-17:15:08.540   rolled back to 3 replica(s) of the previous release
+17:16:57.687 release 3: shipwright-demo:v3-broken (3 running → 3 replicas)
+17:16:57.946   started demo-r3-0, waiting for health check
+17:17:08.324   FAILED: demo-r3-0 did not become healthy within 10000 ms. Rolling back.
+17:17:10.281   rolled back to 3 replica(s) of the previous release
 ```
 
 **Stack:** TypeScript, Node.js, Docker Engine API (dockerode), HAProxy Runtime API, Vitest,
